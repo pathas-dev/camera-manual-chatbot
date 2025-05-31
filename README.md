@@ -8,7 +8,7 @@ FastAPI와 python-telegram-bot을 사용한 카메라 매뉴얼 텔레그램 봇
 - FastAPI 웹 서버와 통합
 - 롱 폴링 개발 모드 지원
 - ConversationHandler를 사용한 대화형 인터페이스
-- 지원 카메라 모델: X-T30, Z5II, D-LUX7
+- 지원 카메라 모델: X-T30, Z5II, D-LUX8
 
 ## 프로젝트 구조
 

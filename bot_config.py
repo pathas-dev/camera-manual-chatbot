@@ -28,7 +28,7 @@ CHOOSING, TYPING_REPLY, TYPING_CHOICE = range(3)
 
 # 키보드 레이아웃
 reply_keyboard_models = [
-    ["X-T30", "Z5II", "D-LUX7"],
+    ["X-T30", "Z5II", "D-LUX8"],
 ]
 
 reply_keyboard_commands = [
@@ -44,4 +44,4 @@ reply_markup_commands = ReplyKeyboardMarkup(
 )
 
 # 지원하는 카메라 모델
-SUPPORTED_MODELS = ["X-T30", "Z5II", "D-LUX7"]
+SUPPORTED_MODELS = ["X-T30", "Z5II", "D-LUX8"]

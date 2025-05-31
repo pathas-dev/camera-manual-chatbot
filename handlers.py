@@ -2,10 +2,11 @@
 텔레그램 봇 핸들러 함수들
 """
 
-import re
+from langchain_ollama import OllamaEmbeddings
 from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
+from langchain_community.vectorstores import FAISS
 from bot_config import (
     logger,
     reply_markup_models,
@@ -15,6 +16,8 @@ from bot_config import (
     TYPING_CHOICE,
     SUPPORTED_MODELS,
 )
+
+FAISS_INDEX_PATH = "faiss_ai_sample_index"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -133,13 +136,61 @@ async def query_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     query = update.message.text
     model = context.user_data.get("choice", "Unknown")
 
+    if not query or not model:
+        await update.message.reply_text(
+            "질문이 비어있거나 모델이 선택되지 않았습니다. 다시 시도해주세요.",
+            reply_markup=reply_markup_models,
+        )
+        return TYPING_CHOICE
+
+    embeddings_ollama = OllamaEmbeddings(model="bge-m3")
+    local_faiss = FAISS.load_local(
+        FAISS_INDEX_PATH,
+        embeddings_ollama,
+        allow_dangerous_deserialization=True,
+    )
+
+    retriever = local_faiss.as_retriever(
+        search_kwargs={"k": 1, "temperature": 0.1, "filter": {"model": model}}
+    )
+
+    docs = retriever.invoke(query)
+
+    formatted_docs = []
+
+    for i, (doc) in enumerate(docs):
+        metadata = doc.metadata if hasattr(doc, "metadata") else {}
+
+        source_info = []
+
+        if "model" in metadata:
+            source_info.append(f"모델: {metadata['model']}")
+
+        if "page_no" in metadata:
+            source_info.append(f"페이지: {metadata['page_no']}")
+
+        if len(source_info) > 0:
+            formatted_docs.append(
+                f"📚 참고 페이지 {metadata['page_no']}\n"
+                f"• {' | '.join(source_info) if source_info else '출처 정보 없음'}\n"
+                # f"• 내용: {doc.page_content[:100]}{'...' if len(doc.page_content) > 100 else ''}"
+            )
+
+    result = ""
+    for i, doc in enumerate(docs):
+        result += "<code>\n"
+        result += f">> {doc.page_content}\n\n"
+        result += f"{formatted_docs[i]}"
+        result += "</code>"
+
     help_text = (
-        f"📸 {model}에 대한 질문을 받았습니다: {query}\n\n"
+        f"🔍 {model}: {query}\n\n"
+        "🔹 <b>검색 결과</b>:\n"
+        f"{result}\n\n"
         "🔹 더 궁금한 게 있으신가요?\n"
         "🔹 'DONE'을 선택해서 대화를 종료할 수 있습니다.\n"
     )
 
-    # TODO: 실제 매뉴얼 검색 로직 구현
     await update.message.reply_html(
         help_text,
         reply_markup=reply_markup_commands,

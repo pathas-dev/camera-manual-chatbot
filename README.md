@@ -4,10 +4,25 @@ FastAPI와 python-telegram-bot을 사용한 카메라 매뉴얼 텔레그램 봇
 
 ## 기능
 
-- 텔레그램 봇을 통한 메시지 주고받기
+- 텔레그램 봇을 통한 대화형 카메라 매뉴얼 검색
 - FastAPI 웹 서버와 통합
-- 웹훅 및 롱 폴링 지원
-- 기본 명령어 처리 (/start, /help)
+- 롱 폴링 개발 모드 지원
+- ConversationHandler를 사용한 대화형 인터페이스
+- 지원 카메라 모델: X-T30, Z5II, D-LUX7
+
+## 프로젝트 구조
+
+```
+camera_manual_bot/
+├── main.py              # FastAPI 웹 서버
+├── bot_polling.py       # 개발용 롱 폴링 실행 스크립트
+├── bot_config.py        # 봇 설정 및 공통 상수
+├── bot_setup.py         # 봇 애플리케이션 설정 및 핸들러 등록
+├── handlers.py          # 텔레그램 핸들러 함수들
+├── .env                 # 환경변수 설정
+├── pyproject.toml       # 의존성 관리
+└── README.md           # 프로젝트 문서
+```
 
 ## 설정
 
@@ -41,6 +56,13 @@ uv run python bot_polling.py
 # uvicorn으로 직접 실행
 uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+## 봇 명령어
+
+- `/start` - 봇 시작 및 환영 메시지
+- `/help` - 도움말 보기
+- `/manual` - 카메라 매뉴얼 검색 시작
+- `/done` - 대화 종료
 
 ## API 엔드포인트
 

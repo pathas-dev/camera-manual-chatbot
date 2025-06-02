@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from typing import Optional
 import uuid
 
-import faiss
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
 )
@@ -20,15 +21,13 @@ from bot_config import BOT_TOKEN, logger
 from bot_setup import create_bot_application
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS
-from langchain_community.docstore.in_memory import InMemoryDocstore
-from langchain_ollama import OllamaEmbeddings
+from pinecone import Pinecone, ServerlessSpec
+from handlers import PINECONE_INDEX_NAME
 
 # 전역 변수
 telegram_app: Optional[Application] = None
 bot_task: Optional[asyncio.Task] = None
-faiss_db: Optional[FAISS] = None
-FAISS_INDEX_PATH = "faiss_ai_sample_index"
+pinecone_db: Optional[Pinecone] = None
 
 
 async def start_telegram_bot() -> None:
@@ -176,36 +175,37 @@ async def health_check():
 async def upload_pdf(
     file: UploadFile = File(...), model: str = Query(..., description="PDF 파일의 이름")
 ):
-    """PDF 파일 업로드 및 FAISS DB에 저장"""
+    """PDF 파일 업로드 및 PINECONE DB에 저장"""
     if not file.filename or not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
 
     try:
-        global faiss_db
+        pinecone_db = None
 
-        embeddings_ollama = OllamaEmbeddings(model="bge-m3")
+        embeddings_model = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
         try:
-            local_faiss = FAISS.load_local(
-                FAISS_INDEX_PATH,
-                embeddings_ollama,
-                allow_dangerous_deserialization=True,
-            )
+            pinecone_api_key = os.environ.get("PINECONE_API_KEY")
+            pc = Pinecone(api_key=pinecone_api_key)
 
-            faiss_db = local_faiss
-            logger.info(f"로컬 FAISS DB 로드 완료: {FAISS_INDEX_PATH}")
+            if not pc.has_index(PINECONE_INDEX_NAME):
+                pc.create_index(
+                    name=PINECONE_INDEX_NAME,
+                    dimension=1024,
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+                )
+
+            index = pc.Index(PINECONE_INDEX_NAME)
+            pinecone_db = PineconeVectorStore(index=index, embedding=embeddings_model)
+
+            logger.info(f"로컬 PINECONE DB 로드 완료: {PINECONE_INDEX_NAME}")
         except Exception as e:
-            dim = 1024  # 임베딩 차원
-            faiss_index = faiss.IndexFlatL2(dim)
-
-            # FAISS 벡터 저장소 생성
-            faiss_db = FAISS(
-                embedding_function=embeddings_ollama,
-                index=faiss_index,
-                docstore=InMemoryDocstore(),
-                index_to_docstore_id={},
+            logger.error(f"PINECONE DB 로드 실패: {e}")
+            raise HTTPException(
+                status_code=500, detail="PINECONE DB 로드 중 오류가 발생했습니다."
             )
 
-        saved_docs = faiss_db.similarity_search(
+        saved_docs = pinecone_db.similarity_search(
             model,
             k=1,
             filter={"$and": [{"model": model}, {"source": file.filename}]},
@@ -248,15 +248,13 @@ async def upload_pdf(
             text.metadata["source"] = file.filename
             text.metadata["page_no"] = i + 1
 
-        added_doc_ids = faiss_db.add_documents(
+        added_doc_ids = pinecone_db.add_documents(
             documents=texts,  # 문서 리스트
             doc_ids=doc_ids,  # 문서 id 리스트
         )
 
-        faiss_db.save_local(FAISS_INDEX_PATH)
-
         logger.info(
-            f"PDF 업로드 완료: {file.filename}, 이름: {model}, FAISS DB 저장 개수: {len(added_doc_ids)}"
+            f"PDF 업로드 완료: {file.filename}, 이름: {model}, Pinecone DB 저장 개수: {len(added_doc_ids)}"
         )
 
         return JSONResponse(

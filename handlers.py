@@ -2,11 +2,17 @@
 텔레그램 봇 핸들러 함수들
 """
 
-from langchain_ollama import OllamaEmbeddings
+import os
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from langchain_groq import ChatGroq
+from pinecone import Pinecone, ServerlessSpec
 from telegram import ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
-from langchain_community.vectorstores import FAISS
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from bot_config import (
     logger,
     reply_markup_models,
@@ -17,7 +23,7 @@ from bot_config import (
     SUPPORTED_MODELS,
 )
 
-FAISS_INDEX_PATH = "faiss_ai_sample_index"
+PINECONE_INDEX_NAME = "telegram-camera-bot-index"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -143,15 +149,54 @@ async def query_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         )
         return TYPING_CHOICE
 
-    embeddings_ollama = OllamaEmbeddings(model="bge-m3")
-    local_faiss = FAISS.load_local(
-        FAISS_INDEX_PATH,
-        embeddings_ollama,
-        allow_dangerous_deserialization=True,
+    await update.message.reply_html(
+        "🔍 <b>검색 중...</b>\n\n",
+        reply_markup=reply_markup_models,
     )
 
-    retriever = local_faiss.as_retriever(
-        search_kwargs={"k": 1, "temperature": 0.1, "filter": {"model": model}}
+    pinecone_db = None
+
+    embeddings_model = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
+    try:
+        pinecone_api_key = os.environ.get("PINECONE_API_KEY")
+        pc = Pinecone(api_key=pinecone_api_key)
+
+        if not pc.has_index(PINECONE_INDEX_NAME):
+            pc.create_index(
+                name=PINECONE_INDEX_NAME,
+                dimension=1024,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+
+        index = pc.Index(PINECONE_INDEX_NAME)
+        pinecone_db = PineconeVectorStore(index=index, embedding=embeddings_model)
+
+        logger.info(f"로컬 PINECONE DB 로드 완료: {PINECONE_INDEX_NAME}")
+    except Exception as e:
+        logger.error(f"PINECONE DB 로드 실패: {e}")
+        await update.message.reply_html(
+            "답변 생성에 실패했습니다. 나중에 다시 시도해주세요.",
+            reply_markup=reply_markup_models,
+        )
+
+    if not pinecone_db:
+        await update.message.reply_html(
+            "Database 연결에 실패했습니다. 나중에 다시 시도해주세요.",
+            reply_markup=reply_markup_models,
+        )
+        return TYPING_CHOICE
+
+    retriever = pinecone_db.as_retriever(
+        search_kwargs={"k": 1, "filter": {"model": model}}
+    )
+
+    llm = ChatGroq(
+        model="gemma2-9b-it",
+        temperature=0.2,
+        max_tokens=None,
+        timeout=None,
+        max_retries=2,
     )
 
     docs = retriever.invoke(query)
@@ -183,10 +228,30 @@ async def query_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         result += f"{formatted_docs[i]}"
         result += "</code>"
 
+    prompt = PromptTemplate.from_template(
+        """당신은 카메라 매뉴얼 전문가입니다. 
+        주어진 컨텍스트를 바탕으로 사용자의 질문에 정확하고 도움이 되는 답변을 제공해주세요.
+        
+        컨텍스트: {context}
+        
+        질문: {question}
+        
+        답변:"""
+    )
+
+    chain = (
+        {"context": lambda _: result, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    answer = chain.invoke(query)
+
     help_text = (
         f"🔍 {model}: {query}\n\n"
         "🔹 <b>검색 결과</b>:\n"
-        f"{result}\n\n"
+        f"{answer}\n\n"
         "🔹 더 궁금한 게 있으신가요?\n"
         "🔹 'DONE'을 선택해서 대화를 종료할 수 있습니다.\n"
     )

@@ -41,7 +41,8 @@ async def start_telegram_bot() -> None:
     logger.info("🤖 텔레그램 봇 백그라운드 시작 (폴링 모드)")
 
     # 봇 애플리케이션 생성
-    telegram_app = create_bot_application()
+    if not telegram_app:
+        telegram_app = create_bot_application()
 
     # 봇 초기화 및 시작
     await telegram_app.initialize()
